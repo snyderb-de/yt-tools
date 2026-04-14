@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YT Tools Dashboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Project Dashboard</p>
+        <h1>YT Tools</h1>
+        <p class="subtitle">macOS downloader + converter powered by yt-dlp and ffmpeg</p>
+      </div>
+      <div class="meta">
+        <div class="meta-item">
+          <span>Owner</span>
+          <strong>Baghead</strong>
+        </div>
+        <div class="meta-item">
+          <span>Current Phase</span>
+          <strong>MVP Hardening</strong>
+        </div>
+        <div class="meta-item">
+          <span>Updated</span>
+          <strong id="updated-at">--</strong>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="grid metrics" id="metrics"></section>
+
+      <section>
+        <h2>Now / Next / Later</h2>
+        <div class="grid roadmap" id="roadmap"></div>
+      </section>
+
+      <section>
+        <h2>MVP Action Plan</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Track</th>
+                <th>Goal</th>
+                <th>Status</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody id="action-plan"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>Risk Register</h2>
+        <ul id="risks" class="risk-list"></ul>
+      </section>
+
+      <section>
+        <h2>Immediate TODOs</h2>
+        <ul id="todos" class="todo-list"></ul>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
