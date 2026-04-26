@@ -9,3 +9,7 @@ xcuserdata/
 releases/macos/*.app
 releases/macos/*.dmg
 build/logs/
+
+# Built release binaries
+releases/macos/yttools-tui
+releases/macos/yt-tools
