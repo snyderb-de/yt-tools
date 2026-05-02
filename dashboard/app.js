@@ -1,15 +1,15 @@
 const metrics = [
-  { label: "MVP tasks complete", value: "12 / 14" },
-  { label: "Core blockers", value: "1" },
+  { label: "MVP tasks complete", value: "14 / 14" },
+  { label: "Core blockers", value: "0" },
   { label: "Next milestone", value: "Queue" },
   { label: "Release target", value: "Alpha" }
 ];
 
 const roadmap = {
   now: [
-    { text: "Harden URL + auth validation", className: "" },
-    { text: "Persist settings and last-used output", className: "" },
-    { text: "Add command-builder unit tests", className: "" }
+    { text: "Add unit tests for command argument builders", className: "" },
+    { text: "Map common yt-dlp errors to friendlier messages", className: "" },
+    { text: "Smoke-test dark/light themes in both frontends", className: "" }
   ],
   next: [
     { text: "Multi-job queue and cancellation model", className: "" },
@@ -27,7 +27,10 @@ const roadmap = {
     { text: "yt-dlp + ffmpeg execution pipeline", className: "done" },
     { text: "Auth passthrough modes in UI", className: "done" },
     { text: "URL-list-file bulk mode in app", className: "done" },
-    { text: "Live network throughput graph in all apps", className: "done" }
+    { text: "Live network throughput graph in all apps", className: "done" },
+    { text: "Input validation messaging improvements", className: "done" },
+    { text: "Preset save/load for format/output/auth", className: "done" },
+    { text: "Settings persistence in Swift + Go frontends", className: "done" }
   ]
 };
 
@@ -47,14 +50,14 @@ const actionPlan = [
   {
     track: "Auth",
     goal: "Support private/restricted content flows",
-    status: "progress",
-    notes: "Browser cookies and cookies.txt in place; error messaging next"
+    status: "done",
+    notes: "Browser cookies and cookies.txt wired in both frontends"
   },
   {
     track: "Reliability",
     goal: "Improve failures and cancellation reporting",
-    status: "todo",
-    notes: "Map common yt-dlp errors into friendlier UI messages"
+    status: "progress",
+    notes: "Validation + warnings shipped; extractor-specific error mapping remains"
   },
   {
     track: "Batch",
@@ -71,10 +74,10 @@ const risks = [
 ];
 
 const todos = [
-  "Implement app settings persistence for defaults and recent output paths.",
-  "Add validation for missing cookies.txt path when file auth is selected.",
   "Write tests for argument generation per mode/auth combination.",
-  "Define queue data model before playlist feature work starts."
+  "Define queue data model before playlist feature work starts.",
+  "Add playlist URL ingestion with selective include/exclude controls.",
+  "Package signed macOS app bundle and stage release workflow."
 ];
 
 function renderMetrics() {

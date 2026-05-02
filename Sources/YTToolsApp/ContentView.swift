@@ -218,6 +218,56 @@ struct ContentView: View {
                 .disabled(viewModel.isRunning)
             }
 
+            HStack(spacing: 10) {
+                Text("Preset")
+                    .frame(width: 120, alignment: .leading)
+                TextField("default", text: $viewModel.presetName)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(viewModel.isRunning)
+
+                if !viewModel.savedPresetNames.isEmpty {
+                    Picker("Saved", selection: $viewModel.presetName) {
+                        ForEach(viewModel.savedPresetNames, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 170)
+                    .disabled(viewModel.isRunning)
+                }
+
+                Button("Save Preset") {
+                    viewModel.saveCurrentPreset()
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.isRunning)
+
+                Button("Load Preset") {
+                    viewModel.loadSelectedPreset()
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.isRunning)
+
+                Button("Delete Preset") {
+                    viewModel.deleteSelectedPreset()
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.isRunning)
+            }
+
+            if !viewModel.validationMessages.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Validation")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(viewModel.validationMessages, id: \.self) { message in
+                        Text("• \(message)")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
             if !viewModel.lastCommand.isEmpty {
                 Text("Last command")
                     .font(.caption)

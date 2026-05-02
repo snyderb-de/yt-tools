@@ -14,9 +14,9 @@
 - [x] Add CLI batch script for URL list -> MP3 conversion
 - [x] Migrate Go TUI to Charm stack (Bubble Tea + Huh + Lip Gloss)
 - [x] Add live network throughput graph to Swift and Go frontends (smoothed + animated)
-- [ ] Add input validation messaging improvements
-- [ ] Add user preset save/load (format + output + auth)
-- [ ] Add settings persistence (both frontends)
+- [x] Add input validation messaging improvements
+- [x] Add user preset save/load (format + output + auth)
+- [x] Add settings persistence (both frontends)
 
 ## Phase 2 (Near term)
 

@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -10,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +40,7 @@ type configState struct {
 	AuthMode         string
 	Browser          string
 	CookiesPath      string
+	PresetName       string
 }
 
 type logLineMsg struct{ line string }
@@ -62,6 +66,15 @@ type batchDoneMsg struct {
 }
 type browserOpenMsg struct{ err error }
 
+type persistedSettings struct {
+	Config configState `json:"config"`
+}
+
+type presetRecord struct {
+	Name   string      `json:"name"`
+	Config configState `json:"config"`
+}
+
 type model struct {
 	width  int
 	height int
@@ -85,6 +98,10 @@ type model struct {
 
 	events chan tea.Msg
 
+	settingsPath string
+	presetsPath  string
+	presetNames  []string
+
 	speedSamples []float64
 	currentMbps  float64
 	peakMbps     float64
@@ -102,15 +119,18 @@ func main() {
 
 func newModel() model {
 	home, _ := os.UserHomeDir()
+	configDir := filepath.Join(home, ".config", "yt-tools")
 
 	m := model{
-		status:     "Ready",
-		summary:    "Ctrl+R Run  •  Ctrl+X Cancel  •  Ctrl+L Open YouTube Login  •  Q Quit",
-		events:     make(chan tea.Msg, 4096),
-		logs:       []string{},
-		ytDlpPath:  findTool("yt-dlp"),
-		ffmpegPath: findTool("ffmpeg"),
-		nodePath:   findTool("node"),
+		status:       "Ready",
+		summary:      "Ctrl+R Run  •  Ctrl+S Save Preset  •  Ctrl+O Load Preset  •  Ctrl+X Cancel  •  Ctrl+L Login  •  Q Quit",
+		events:       make(chan tea.Msg, 4096),
+		logs:         []string{},
+		ytDlpPath:    findTool("yt-dlp"),
+		ffmpegPath:   findTool("ffmpeg"),
+		nodePath:     findTool("node"),
+		settingsPath: filepath.Join(configDir, "settings.json"),
+		presetsPath:  filepath.Join(configDir, "presets.json"),
 		config: configState{
 			InputMode:        "single-url",
 			URL:              "",
@@ -123,7 +143,14 @@ func newModel() model {
 			AuthMode:         "none",
 			Browser:          "safari",
 			CookiesPath:      "",
+			PresetName:       "default",
 		},
+	}
+
+	if loaded, err := loadSettings(m.settingsPath); err == nil {
+		m.config = loaded
+	} else if !errors.Is(err, os.ErrNotExist) {
+		m.appendLog("WARN: could not load settings: " + err.Error())
 	}
 
 	m.viewport = viewport.New(80, 20)
@@ -148,6 +175,12 @@ func newModel() model {
 		m.appendLog("WARNING: node not found. Some YouTube URLs may fail without JS runtime.")
 	} else {
 		m.appendLog("Detected node at " + m.nodePath)
+	}
+
+	if names, err := listPresetNames(m.presetsPath); err == nil {
+		m.presetNames = names
+	} else if !errors.Is(err, os.ErrNotExist) {
+		m.appendLog("WARN: could not read presets: " + err.Error())
 	}
 
 	m.appendLog("Ready. Use input mode 'url-list-file' for bulk jobs (one URL per line).")
@@ -225,6 +258,10 @@ func buildForm(cfg *configState) *huh.Form {
 			huh.NewInput().
 				Title("cookies.txt Path").
 				Value(&cfg.CookiesPath),
+			huh.NewInput().
+				Title("Preset Name").
+				Placeholder("default").
+				Value(&cfg.PresetName),
 		),
 	)
 }
@@ -266,6 +303,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.requestCancel()
 				return m, nil
 			}
+			if err := saveSettings(m.settingsPath, m.config); err != nil {
+				m.appendLog("WARN: failed to save settings: " + err.Error())
+			}
 			return m, tea.Quit
 		case "ctrl+r":
 			if m.running {
@@ -274,6 +314,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if err := m.startBatch(); err != nil {
 				m.status = "Input error"
+				m.appendLog("ERROR: " + err.Error())
+			}
+			return m, nil
+		case "ctrl+s":
+			if err := m.saveCurrentPreset(); err != nil {
+				m.status = "Preset save failed"
+				m.appendLog("ERROR: " + err.Error())
+			}
+			return m, nil
+		case "ctrl+o":
+			if err := m.loadSelectedPreset(); err != nil {
+				m.status = "Preset load failed"
 				m.appendLog("ERROR: " + err.Error())
 			}
 			return m, nil
@@ -366,9 +418,18 @@ func (m *model) startBatch() error {
 		return fmt.Errorf("yt-dlp not found in PATH")
 	}
 
+	issues := validateConfig(m.config, m.nodePath)
+	if len(issues) > 0 {
+		return fmt.Errorf("validation failed:\n- %s", strings.Join(issues, "\n- "))
+	}
+
 	urls, err := m.resolveInputURLs()
 	if err != nil {
 		return err
+	}
+
+	if err := saveSettings(m.settingsPath, m.config); err != nil {
+		m.appendLog("WARN: failed to save settings: " + err.Error())
 	}
 
 	m.running = true
@@ -570,6 +631,10 @@ func (m *model) resolveInputURLs() ([]string, error) {
 }
 
 func loadURLsFromFile(path string) ([]string, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("URL list file not found: %s", path)
+	}
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read URL list file: %w", err)
@@ -577,13 +642,13 @@ func loadURLsFromFile(path string) ([]string, error) {
 
 	lines := strings.Split(string(content), "\n")
 	urls := make([]string, 0, len(lines))
-	for _, line := range lines {
+	for idx, line := range lines {
 		value := strings.TrimSpace(line)
 		if value == "" || strings.HasPrefix(value, "#") {
 			continue
 		}
 		if !isHTTPURL(value) {
-			return nil, fmt.Errorf("invalid URL in list file: %s", value)
+			return nil, fmt.Errorf("invalid URL in list file at line %d: %s", idx+1, value)
 		}
 		urls = append(urls, value)
 	}
@@ -593,6 +658,165 @@ func loadURLsFromFile(path string) ([]string, error) {
 	}
 
 	return urls, nil
+}
+
+func validateConfig(cfg configState, nodePath string) []string {
+	issues := []string{}
+
+	if strings.TrimSpace(cfg.OutputDir) == "" {
+		issues = append(issues, "output directory is required")
+	}
+	if strings.TrimSpace(cfg.FilenameTemplate) == "" {
+		issues = append(issues, "filename template is required")
+	} else if !strings.Contains(cfg.FilenameTemplate, "%(ext)s") {
+		issues = append(issues, "filename template should include %(ext)s so converted files get an extension")
+	}
+	if cfg.AuthMode == "cookies-file" {
+		cookiePath := strings.TrimSpace(cfg.CookiesPath)
+		if cookiePath == "" {
+			issues = append(issues, "cookies.txt path is required when auth mode is cookies-file")
+		} else if _, err := os.Stat(cookiePath); err != nil {
+			issues = append(issues, fmt.Sprintf("cookies.txt path not found: %s", cookiePath))
+		}
+	}
+	if nodePath == "" {
+		issues = append(issues, "node runtime not found: YouTube may reject extraction (install node or switch auth path)")
+	}
+
+	return issues
+}
+
+func saveSettings(path string, cfg configState) error {
+	payload := persistedSettings{Config: cfg}
+	return writeJSON(path, payload)
+}
+
+func loadSettings(path string) (configState, error) {
+	var payload persistedSettings
+	if err := readJSON(path, &payload); err != nil {
+		return configState{}, err
+	}
+	return payload.Config, nil
+}
+
+func (m *model) saveCurrentPreset() error {
+	name := strings.TrimSpace(m.config.PresetName)
+	if name == "" {
+		return fmt.Errorf("preset name is required")
+	}
+
+	records, err := loadPresets(m.presetsPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	cfgCopy := m.config
+	cfgCopy.PresetName = name
+
+	replaced := false
+	for i := range records {
+		if records[i].Name == name {
+			records[i].Config = cfgCopy
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		records = append(records, presetRecord{Name: name, Config: cfgCopy})
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		return strings.ToLower(records[i].Name) < strings.ToLower(records[j].Name)
+	})
+
+	if err := savePresets(m.presetsPath, records); err != nil {
+		return err
+	}
+
+	m.presetNames = extractPresetNames(records)
+	m.appendLog("Saved preset: " + name)
+	return nil
+}
+
+func (m *model) loadSelectedPreset() error {
+	name := strings.TrimSpace(m.config.PresetName)
+	if name == "" {
+		return fmt.Errorf("preset name is required")
+	}
+
+	records, err := loadPresets(m.presetsPath)
+	if err != nil {
+		return err
+	}
+
+	for _, record := range records {
+		if record.Name == name {
+			m.config = record.Config
+			m.config.PresetName = name
+			m.form = buildForm(&m.config)
+			m.presetNames = extractPresetNames(records)
+			if err := saveSettings(m.settingsPath, m.config); err != nil {
+				m.appendLog("WARN: failed to persist loaded preset settings: " + err.Error())
+			}
+			m.appendLog("Loaded preset: " + name)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("preset not found: %s", name)
+}
+
+func savePresets(path string, records []presetRecord) error {
+	return writeJSON(path, records)
+}
+
+func loadPresets(path string) ([]presetRecord, error) {
+	var records []presetRecord
+	if err := readJSON(path, &records); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func listPresetNames(path string) ([]string, error) {
+	records, err := loadPresets(path)
+	if err != nil {
+		return nil, err
+	}
+	return extractPresetNames(records), nil
+}
+
+func extractPresetNames(records []presetRecord) []string {
+	names := make([]string, 0, len(records))
+	for _, record := range records {
+		if strings.TrimSpace(record.Name) == "" {
+			continue
+		}
+		names = append(names, record.Name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		return strings.ToLower(names[i]) < strings.ToLower(names[j])
+	})
+	return names
+}
+
+func writeJSON(path string, value any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func readJSON(path string, target any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, target)
 }
 
 func (m *model) requestCancel() {
@@ -715,6 +939,8 @@ func (m model) View() string {
 		metaStyle.Render("ffmpeg: "+displayOrMissing(m.ffmpegPath)),
 		"    ",
 		metaStyle.Render("node: "+displayOrMissing(m.nodePath)),
+		"    ",
+		metaStyle.Render(fmt.Sprintf("preset: %s (%d saved)", displayOrDash(strings.TrimSpace(m.config.PresetName)), len(m.presetNames))),
 	)
 
 	command := m.lastCommand
@@ -873,6 +1099,13 @@ func displayOrMissing(path string) string {
 		return "missing"
 	}
 	return path
+}
+
+func displayOrDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
 }
 
 func findTool(name string) string {

@@ -21,6 +21,9 @@ Both run `yt-dlp` and `ffmpeg` locally.
   - `--cookies /path/to/cookies.txt`
 - Live job logs and cancel support
 - Live network throughput graph in both frontends (animated gradient + smoothing)
+- Input validation with actionable warnings/errors
+- Saved presets (format/output/auth) in both frontends
+- Persistent settings across launches in both frontends
 
 ## Repo layout
 
@@ -59,6 +62,8 @@ Go TUI keys:
 - `Ctrl+R` run
 - `Ctrl+X` cancel
 - `Ctrl+L` open YouTube login in browser
+- `Ctrl+S` save preset
+- `Ctrl+O` load preset
 - `Q` quit (or `Ctrl+C` when idle)
 
 4. Batch audio from URL list file:
@@ -87,6 +92,6 @@ Go TUI keys:
 - Playlist workflows
 - Subscription/channel management
 - Bulk queue actions
-- Saved presets and automation rules
+- Automation rules
 
 See `TODO.md` and `docs/ACTION_PLAN.md` for roadmap details.

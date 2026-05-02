@@ -1,6 +1,6 @@
 import Foundation
 
-enum InputMode: String, CaseIterable, Identifiable {
+enum InputMode: String, CaseIterable, Identifiable, Codable {
     case singleURL
     case urlListFile
 
@@ -16,7 +16,7 @@ enum InputMode: String, CaseIterable, Identifiable {
     }
 }
 
-enum DownloadMode: String, CaseIterable, Identifiable {
+enum DownloadMode: String, CaseIterable, Identifiable, Codable {
     case audioExtract
     case audioConvert
     case videoConvert
@@ -35,7 +35,7 @@ enum DownloadMode: String, CaseIterable, Identifiable {
     }
 }
 
-enum AudioFormat: String, CaseIterable, Identifiable {
+enum AudioFormat: String, CaseIterable, Identifiable, Codable {
     case mp3
     case m4a
     case wav
@@ -49,7 +49,7 @@ enum AudioFormat: String, CaseIterable, Identifiable {
     }
 }
 
-enum VideoFormat: String, CaseIterable, Identifiable {
+enum VideoFormat: String, CaseIterable, Identifiable, Codable {
     case mp4
     case mkv
     case webm
@@ -62,7 +62,7 @@ enum VideoFormat: String, CaseIterable, Identifiable {
     }
 }
 
-enum AuthMethod: String, CaseIterable, Identifiable {
+enum AuthMethod: String, CaseIterable, Identifiable, Codable {
     case none
     case cookiesFromBrowser
     case cookiesFile
@@ -81,7 +81,7 @@ enum AuthMethod: String, CaseIterable, Identifiable {
     }
 }
 
-enum BrowserCookieSource: String, CaseIterable, Identifiable {
+enum BrowserCookieSource: String, CaseIterable, Identifiable, Codable {
     case safari
     case chrome
     case firefox

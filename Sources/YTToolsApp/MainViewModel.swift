@@ -9,21 +9,49 @@ final class MainViewModel: ObservableObject {
         }
     }
 
-    @Published var inputMode: InputMode = .singleURL
-    @Published var videoURL: String = ""
+    @Published var inputMode: InputMode = .singleURL {
+        didSet { persistSettingsIfNeeded() }
+    }
+    @Published var videoURL: String = "" {
+        didSet { persistSettingsIfNeeded() }
+    }
     @Published var urlListFilePath: String = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Desktop/raelynn-list.text", isDirectory: false).path
+        .appendingPathComponent("Desktop/raelynn-list.text", isDirectory: false).path {
+        didSet { persistSettingsIfNeeded() }
+    }
 
-    @Published var mode: DownloadMode = .audioConvert
-    @Published var audioFormat: AudioFormat = .mp3
-    @Published var videoFormat: VideoFormat = .mp4
+    @Published var mode: DownloadMode = .audioConvert {
+        didSet { persistSettingsIfNeeded() }
+    }
+    @Published var audioFormat: AudioFormat = .mp3 {
+        didSet { persistSettingsIfNeeded() }
+    }
+    @Published var videoFormat: VideoFormat = .mp4 {
+        didSet { persistSettingsIfNeeded() }
+    }
     @Published var outputDirectory: String = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Downloads/YTTools", isDirectory: true).path
-    @Published var outputTemplate: String = "%(title)s.%(ext)s"
+        .appendingPathComponent("Downloads/YTTools", isDirectory: true).path {
+        didSet { persistSettingsIfNeeded() }
+    }
+    @Published var outputTemplate: String = "%(title)s.%(ext)s" {
+        didSet { persistSettingsIfNeeded() }
+    }
 
-    @Published var authMethod: AuthMethod = .none
-    @Published var browserSource: BrowserCookieSource = .safari
-    @Published var cookieFilePath: String = ""
+    @Published var authMethod: AuthMethod = .none {
+        didSet { persistSettingsIfNeeded() }
+    }
+    @Published var browserSource: BrowserCookieSource = .safari {
+        didSet { persistSettingsIfNeeded() }
+    }
+    @Published var cookieFilePath: String = "" {
+        didSet { persistSettingsIfNeeded() }
+    }
+
+    @Published var presetName: String = "default" {
+        didSet { persistSettingsIfNeeded() }
+    }
+    @Published var savedPresetNames: [String] = []
+    @Published var validationMessages: [String] = []
 
     @Published var ytDlpPath: String = ""
     @Published var ffmpegPath: String = ""
@@ -37,17 +65,24 @@ final class MainViewModel: ObservableObject {
 
     private var activeProcess: Process?
     private var isCancellationRequested: Bool = false
+    private var isApplyingStoredSettings = false
+
     private static let themePreferenceKey = "yttools.themeMode"
+    private static let settingsKey = "yttools.settings.v1"
+    private static let presetsKey = "yttools.presets.v1"
     private static let speedRegex = try! NSRegularExpression(
         pattern: #"at\s+([0-9]+(?:\.[0-9]+)?)([KMG]?i?B/s|[KMG]?B/s)"#,
         options: []
     )
 
     init() {
-        if let stored = UserDefaults.standard.string(forKey: Self.themePreferenceKey),
-           let parsed = ThemeMode(rawValue: stored) {
-            themeMode = parsed
+        if let storedTheme = UserDefaults.standard.string(forKey: Self.themePreferenceKey),
+           let parsedTheme = ThemeMode(rawValue: storedTheme) {
+            themeMode = parsedTheme
         }
+
+        applyStoredSettingsIfAvailable()
+        refreshStoredPresets()
         refreshToolPaths()
     }
 
@@ -93,6 +128,25 @@ final class MainViewModel: ObservableObject {
     func runDownload() {
         guard canStart else { return }
 
+        let (errors, warnings) = validateBeforeRun()
+        if !errors.isEmpty {
+            status = "Validation Failed"
+            validationMessages = errors + warnings
+            appendLog("ERROR: Validation failed:\n")
+            for error in errors {
+                appendLog("- \(error)\n")
+            }
+            for warning in warnings {
+                appendLog("WARN: \(warning)\n")
+            }
+            return
+        }
+
+        validationMessages = warnings
+        for warning in warnings {
+            appendLog("WARN: \(warning)\n")
+        }
+
         do {
             let urls = try resolveInputURLs()
             let requestTemplate = DownloadRequest(
@@ -112,6 +166,7 @@ final class MainViewModel: ObservableObject {
             }
         } catch {
             status = "Invalid Input"
+            validationMessages = [error.localizedDescription]
             appendLog("ERROR: \(error.localizedDescription)\n")
         }
     }
@@ -124,6 +179,80 @@ final class MainViewModel: ObservableObject {
         }
         process.terminate()
         appendLog("Cancellation requested.\n")
+    }
+
+    func saveCurrentPreset() {
+        let trimmedName = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            status = "Preset Error"
+            validationMessages = ["Preset name is required."]
+            appendLog("ERROR: Preset name is required.\n")
+            return
+        }
+
+        var presets = loadPresets()
+        let settings = currentSettings().withPresetName(trimmedName)
+
+        if let idx = presets.firstIndex(where: { $0.name == trimmedName }) {
+            presets[idx].settings = settings
+        } else {
+            presets.append(UserPreset(name: trimmedName, settings: settings))
+        }
+
+        persistPresets(presets)
+        presetName = trimmedName
+        refreshStoredPresets()
+        status = "Preset Saved"
+        appendLog("Saved preset: \(trimmedName)\n")
+    }
+
+    func loadSelectedPreset() {
+        let trimmedName = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            status = "Preset Error"
+            validationMessages = ["Preset name is required to load."]
+            appendLog("ERROR: Preset name is required to load.\n")
+            return
+        }
+
+        let presets = loadPresets()
+        guard let preset = presets.first(where: { $0.name == trimmedName }) else {
+            status = "Preset Error"
+            validationMessages = ["Preset not found: \(trimmedName)"]
+            appendLog("ERROR: Preset not found: \(trimmedName)\n")
+            return
+        }
+
+        apply(settings: preset.settings)
+        persistSettingsIfNeeded(force: true)
+        status = "Preset Loaded"
+        appendLog("Loaded preset: \(trimmedName)\n")
+    }
+
+    func deleteSelectedPreset() {
+        let trimmedName = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            status = "Preset Error"
+            validationMessages = ["Preset name is required to delete."]
+            appendLog("ERROR: Preset name is required to delete.\n")
+            return
+        }
+
+        var presets = loadPresets()
+        let originalCount = presets.count
+        presets.removeAll { $0.name == trimmedName }
+
+        if presets.count == originalCount {
+            status = "Preset Error"
+            validationMessages = ["Preset not found: \(trimmedName)"]
+            appendLog("ERROR: Preset not found: \(trimmedName)\n")
+            return
+        }
+
+        persistPresets(presets)
+        refreshStoredPresets()
+        status = "Preset Deleted"
+        appendLog("Deleted preset: \(trimmedName)\n")
     }
 
     func chooseOutputDirectory() {
@@ -275,21 +404,70 @@ final class MainViewModel: ObservableObject {
     }
 
     private func loadURLs(from path: String) throws -> [String] {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw ProcessExecutorError.failedToLaunch("URL list file not found: \(path)")
+        }
+
         let content = try String(contentsOfFile: path, encoding: .utf8)
-        let urls = content
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        let lines = content.components(separatedBy: .newlines)
+        var urls: [String] = []
+
+        for (index, line) in lines.enumerated() {
+            let value = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty || value.hasPrefix("#") {
+                continue
+            }
+            guard isValidURL(value) else {
+                throw ProcessExecutorError.failedToLaunch("Invalid URL in list file at line \(index + 1): \(value)")
+            }
+            urls.append(value)
+        }
 
         guard !urls.isEmpty else {
             throw ProcessExecutorError.failedToLaunch("No URLs found in list file.")
         }
 
-        for url in urls where !isValidURL(url) {
-            throw ProcessExecutorError.failedToLaunch("Invalid URL in list file: \(url)")
+        return urls
+    }
+
+    private func validateBeforeRun() -> (errors: [String], warnings: [String]) {
+        var errors: [String] = []
+        var warnings: [String] = []
+
+        if ytDlpPath.isEmpty {
+            errors.append("yt-dlp is required and was not found on PATH.")
         }
 
-        return urls
+        let output = outputDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        if output.isEmpty {
+            errors.append("Output directory is required.")
+        }
+
+        let template = outputTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        if template.isEmpty {
+            errors.append("Filename template is required.")
+        } else if !template.contains("%(ext)s") {
+            errors.append("Filename template should include %(ext)s.")
+        }
+
+        if (mode == .audioConvert || mode == .videoConvert) && ffmpegPath.isEmpty {
+            errors.append("ffmpeg is required for conversion modes.")
+        }
+
+        if authMethod == .cookiesFile {
+            let cookies = cookieFilePath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cookies.isEmpty {
+                errors.append("cookies.txt path is required for cookies file auth mode.")
+            } else if !FileManager.default.fileExists(atPath: cookies) {
+                errors.append("cookies.txt path not found: \(cookies)")
+            }
+        }
+
+        if nodePath.isEmpty {
+            warnings.append("node runtime not found; some YouTube downloads may fail JS challenge checks.")
+        }
+
+        return (errors, warnings)
     }
 
     private func buildArguments(for request: DownloadRequest) throws -> [String] {
@@ -424,5 +602,116 @@ final class MainViewModel: ObservableObject {
         default:
             return nil
         }
+    }
+
+    private func persistSettingsIfNeeded(force: Bool = false) {
+        guard force || !isApplyingStoredSettings else { return }
+        persistSettings(currentSettings())
+    }
+
+    private func currentSettings() -> AppSettings {
+        AppSettings(
+            inputMode: inputMode,
+            videoURL: videoURL,
+            urlListFilePath: urlListFilePath,
+            mode: mode,
+            audioFormat: audioFormat,
+            videoFormat: videoFormat,
+            outputDirectory: outputDirectory,
+            outputTemplate: outputTemplate,
+            authMethod: authMethod,
+            browserSource: browserSource,
+            cookieFilePath: cookieFilePath,
+            presetName: presetName
+        )
+    }
+
+    private func apply(settings: AppSettings) {
+        isApplyingStoredSettings = true
+
+        inputMode = settings.inputMode
+        videoURL = settings.videoURL
+        urlListFilePath = settings.urlListFilePath
+        mode = settings.mode
+        audioFormat = settings.audioFormat
+        videoFormat = settings.videoFormat
+        outputDirectory = settings.outputDirectory
+        outputTemplate = settings.outputTemplate
+        authMethod = settings.authMethod
+        browserSource = settings.browserSource
+        cookieFilePath = settings.cookieFilePath
+        presetName = settings.presetName
+
+        isApplyingStoredSettings = false
+    }
+
+    private func applyStoredSettingsIfAvailable() {
+        guard let data = UserDefaults.standard.data(forKey: Self.settingsKey) else {
+            return
+        }
+
+        do {
+            let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+            apply(settings: settings)
+        } catch {
+            appendLog("WARN: Could not decode stored settings.\n")
+        }
+    }
+
+    private func persistSettings(_ settings: AppSettings) {
+        do {
+            let data = try JSONEncoder().encode(settings)
+            UserDefaults.standard.set(data, forKey: Self.settingsKey)
+        } catch {
+            appendLog("WARN: Could not persist settings.\n")
+        }
+    }
+
+    private func loadPresets() -> [UserPreset] {
+        guard let data = UserDefaults.standard.data(forKey: Self.presetsKey) else {
+            return []
+        }
+
+        do {
+            return try JSONDecoder().decode([UserPreset].self, from: data)
+        } catch {
+            appendLog("WARN: Could not decode saved presets.\n")
+            return []
+        }
+    }
+
+    private func persistPresets(_ presets: [UserPreset]) {
+        do {
+            let data = try JSONEncoder().encode(presets)
+            UserDefaults.standard.set(data, forKey: Self.presetsKey)
+        } catch {
+            appendLog("WARN: Could not persist presets.\n")
+        }
+    }
+
+    private func refreshStoredPresets() {
+        let names = loadPresets()
+            .map(\.name)
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        savedPresetNames = names
+    }
+}
+
+private extension AppSettings {
+    func withPresetName(_ value: String) -> AppSettings {
+        AppSettings(
+            inputMode: inputMode,
+            videoURL: videoURL,
+            urlListFilePath: urlListFilePath,
+            mode: mode,
+            audioFormat: audioFormat,
+            videoFormat: videoFormat,
+            outputDirectory: outputDirectory,
+            outputTemplate: outputTemplate,
+            authMethod: authMethod,
+            browserSource: browserSource,
+            cookieFilePath: cookieFilePath,
+            presetName: value
+        )
     }
 }
